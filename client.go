@@ -4,65 +4,67 @@ import (
 	"bufio"
 	"fmt"
 	"net"
+	"os"
 	"strings"
-	"time"
 )
 
-func Client(conn net.Conn, u *Users, h *History) {
-	defer conn.Close()
-	scan := bufio.NewScanner(conn)
+func Clinet(conn net.Conn, fileHistory, fileLog os.File) {
+	defer fileHistory.Close()
+	defer fileLog.Close()
 
-	var username string
-
-	conn.Write([]byte(u.Welcome))
-	conn.Write([]byte(askName))
-
-	if scan.Scan() {
-		username = scan.Text()
-	} else {
-		return
+	conn.Write([]byte("Welcome to the TCP chat!\n"))
+	dog, err := os.ReadFile("dog.txt")
+	if err != nil {
+		loger(fmt.Sprintf("[COULDN'T OPEN FILE <logo.txt>][ADDRESS:%v]"), fileLog)
 	}
-	if err := u.Add(conn, username); err != nil {
-		conn.Write([]byte(err.Error()))
-		return
-	}
-	if err := u.CorrectName(conn, username); err != nil {
-		conn.Write([]byte(err.Error()))
-		return
-	}
-	defer u.Delete(username)
+	conn.Write(dog)
+	var userName string
 
-	status <- Message{
-		User: username,
-		Msg:  joinChat,
-		time: time.Now(),
-	}
+	newMsg := message{}
 
-	conn.Write([]byte(h.Get()))
-
-	msg := Message{
-		User: username,
-		time: time.Now(),
-		conn: conn,
-	}
-
-	msg.PreScan(conn, username)
-	for scan.Scan() {
-		text := strings.Trim(scan.Text(), " ")
-		if !isValidtext(text) {
-			fmt.Fprintln(conn, "The empty messages are prohibited")
-			fmt.Fprintf(conn, "[%s][%s]:", time.Now().Format("2006-01-02 15:04:05"), username)
+	for {
+		conn.Write([]byte("[ENTER YOUR NAME]:"))
+		inputName, err := bufio.NewReader(conn).ReadString('\n')
+		userName, err = NameCheck(inputName)
+		if err != nil {
+			conn.Write([]byte(err.Error()))
 			continue
 		}
-		msg.Msg = scan.Text()
-		msg.time = time.Now()
+		mu.Lock()
+		clients[userName] = conn
+		mu.Unlock()
+		loger(fmt.Sprintf("[CLIENT JOIN IN THE CHAT][USER NAME:%v][ADDRESS:%v]", userName, conn.RemoteAddr().String()), fileLog)
+		break
+	}
+	mu.Lock()
+	history, err := os.ReadFile(fileHistory.Name())
+	mu.Unlock()
+	if err != nil {
+		loger(fmt.Sprintf("[COULDN'T READ HISTORY FILE][ADDRESS:%v][ERROR:%s]", conn.RemoteAddr().String(), err.Error()), fileLog)
+	}
+	conn.Write(history)
 
-		mess <- msg
+	messages <- *newMsg.Add("\r"+userName+" has joined our chat..."+strings.Repeat(" ", 20), conn)
+	conn.Write([]byte(template(userName)))
+
+	input := bufio.NewScanner(conn)
+	for input.Scan() {
+		conn.Write([]byte(template(userName)))
+
+		if !newMsg.Add(strings.TrimSpace(input.Text()), conn).Check() {
+			netDate := *newMsg.Add(template(userName)+strings.TrimSpace(input.Text()), conn)
+			mu.Lock()
+			fileHistory.Write([]byte(netDate.text + "\n"))
+			mu.Unlock()
+
+			messages <- netDate
+		}
 	}
 
-	status <- Message{
-		User: username,
-		Msg:  leftChat,
-		time: time.Now(),
-	}
+	loger(fmt.Sprintf("[CLIENT LEFT THE SERVER][USER NAME:%v][ADDRESS:%v]", userName, conn.RemoteAddr().String()), fileLog)
+	mu.Lock()
+	delete(clients, userName)
+	mu.Unlock()
+	status <- *newMsg.Add("\n"+userName+" has left our chat...", conn)
+	conn.Close()
 }

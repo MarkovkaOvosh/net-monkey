@@ -2,73 +2,51 @@ package main
 
 import (
 	"fmt"
+	"log"
 	"net"
 	"os"
 	"sync"
-	"time"
 )
-
-type Users struct {
-	Data    map[string]net.Conn
-	Welcome string
-	mu      sync.Mutex
-}
-
-type History struct {
-	Cont string
-	mu   sync.Mutex
-}
-
-type Message struct {
-	User string
-	Msg  string
-	time time.Time
-	conn net.Conn
-}
 
 var (
-	mess   chan Message = make(chan Message)
-	status chan Message = make(chan Message)
+	clients  = make(map[string]net.Conn)
+	status   = make(chan message)
+	messages = make(chan message)
+	mu       sync.Mutex
 )
 
-const (
-	askName  = "[ENTER YOUR NAME]:"
-	joinChat = " has joined our chat..."
-	leftChat = " has left our chat..."
-)
+type message struct {
+	text    string
+	address string
+}
 
 func main() {
 	listen, err := net.Listen("tcp", "localhost:4000")
 	if err != nil {
-		fmt.Println(err)
+		log.Fatalln(err)
 		return
 	}
+	defer listen.Close()
 
-	ping, err := os.ReadFile("cat.txt")
-	if err != nil {
-		fmt.Println(err)
-		return
-	}
-
-	users := Users{
-		Data:    map[string]net.Conn{},
-		Welcome: string(ping),
-		mu:      sync.Mutex{},
-	}
-	history := History{
-		mu: sync.Mutex{},
-	}
-
-	go BroadCaster(&users, &history)
-
+	h1, err := os.Create("history.txt")
+	h2, err := os.Create("log.txt")
+	loger(fmt.Sprintf("[SERVER WAS STARTED][PORT%v]", 4000), *h2)
+	defer func() {
+		if err := h1.Close(); err != nil {
+			loger("[COULDN'T CLOSE FILE history.txt][ADDRESS:main]", *h2)
+		}
+		if err := h2.Close(); err != nil {
+			loger("[COULDN'T CLOSE FILE log.txt][ADDRESS:main]", *h2)
+		}
+	}()
+	go BroadCaster()
 	for {
 		conn, err := listen.Accept()
 		if err != nil {
-			fmt.Fprintln(conn, err)
-			conn.Close()
+			log.Print(err)
 			continue
 		}
-
-		go Client(conn, &users, &history)
+		loger(fmt.Sprintf("[CONNECT THE SERVER][ADDRESS:%v]", conn.RemoteAddr().String()), *h2)
+		go Clinet(conn, *h1, *h2)
 	}
 }

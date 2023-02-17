@@ -4,94 +4,71 @@ import (
 	"errors"
 	"fmt"
 	"net"
+	"os"
+	"strings"
+	"time"
 )
 
-// Users func
-func (u *Users) Add(conn net.Conn, name string) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	if _, err := u.Data[name]; err {
-		return errors.New("user already exists")
+func newMessage(msg string, conn net.Conn) message {
+	addr := conn.RemoteAddr().String()
+	return message{
+		text:    addr + msg,
+		address: addr,
 	}
-
-	u.Data[name] = conn
-	return nil
 }
 
-func (u *Users) CorrectName(conn net.Conn, name string) error {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	if !ValidName(name, conn) {
-		return errors.New("Incorect input name")
+func loger(s string, file os.File) {
+	str := fmt.Sprintf("[%s]%s\n", time.Now().Format("01-02-2006 15:04:05"), s)
+	mu.Lock()
+	defer mu.Unlock()
+	_, err := file.WriteString(str)
+	if err != nil {
+		fmt.Print(fmt.Sprintf("[%s][COULDN'T WRITE TO FILE][ERROR:%s\n]", time.Now().Format("01-02-2006 15:04:05"), err))
 	}
-
-	u.Data[name] = conn
-	return nil
+	fmt.Print(str)
 }
 
-func (u *Users) Delete(name string) {
-	u.mu.Lock()
-	defer u.mu.Unlock()
-
-	delete(u.Data, name)
+func template(n string) string {
+	return fmt.Sprintf("\r[%s][%s]:", time.Now().Format("01-02-2006 15:04:05"), n)
 }
 
-// History func
-func (h *History) Add(mess string) {
-	h.mu.Lock()
-	h.Cont += mess
-	h.mu.Unlock()
-}
-
-func (h *History) Get() string {
-	h.mu.Lock()
-	defer h.mu.Unlock()
-	return h.Cont
-}
-
-// ///////////
-func (m Message) HistoryString() string {
-	t := m.time.Format("2003-01-02 15:04:05")
-	return fmt.Sprintf("[%s][%s]:%s\n", t, m.User, m.Msg)
-}
-
-func (m Message) String() string {
-	t := m.time.Format("2006-01-02 15:04:05")
-	return fmt.Sprintf("\n[%s][%s]:%s\n", t, m.User, m.Msg)
-}
-
-func (m Message) PreScan(conn net.Conn, name string) {
-	t := m.time.Format("2006-01-02 15:04:05")
-	fmt.Fprintf(conn, "[%s][%s]:", t, name)
-}
-
-func isValidtext(text string) bool {
-	if text == "" {
-		return false
+func (t message) Add(text string, c net.Conn) *message {
+	return &message{
+		text:    text,
+		address: c.RemoteAddr().String(),
 	}
-	for _, simbol := range text {
-		if simbol < 32 || simbol > 127 {
-			return false
+}
+
+func (t message) Check() bool {
+	if t.text == "" {
+		return true
+	}
+	for _, val := range t.text {
+		if val < ' ' || val > '~' {
+			return true
 		}
 	}
-	return true
+	return false
 }
 
-func ValidName(username string, connection net.Conn) bool {
-	if username == "" || len(username) == 0 {
-		fmt.Fprintf(connection, "The username is the necessary condition to enter the chat")
-		connection.Close()
-		return false
+func NameCheck(str string) (string, error) {
+	userName := strings.TrimSuffix(strings.TrimSpace(str), "\n")
+	if len(userName) < 3 || len(userName) > 12 {
+		return "", errors.New("Bad name! Len name must be more 2 and less 12 symbols\n")
 	}
-	for _, simbol := range username {
-		if simbol < 47 || simbol > 122 {
-			fmt.Fprintln(connection, "Incorrect input")
-			connection.Close()
-			// fmt.Fprintf(connection, "[%s][%s]:", time, username)
-			return false
+	for _, v := range userName {
+		if v >= 'A' && v <= 'Z' || v >= 'a' && v <= 'z' {
+			continue
 		}
+		return "", errors.New("Bad name! Name must has only latin alphabet\n")
 	}
-	return true
+	mu.Lock()
+	defer mu.Unlock()
+	if _, ok := clients[userName]; ok {
+		return "", errors.New("Name already has! Please try again.\n")
+	}
+	if len(clients) > 9 {
+		return "", errors.New("Sever already full! Please try to connect later.\n")
+	}
+	return userName, nil
 }
